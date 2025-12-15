@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  agent:
+    build: .
+    volumes:
+      - ./example:/app/example
+    env_file:
+      - .env
+    command: ["python3", "main.py", "start"]
+    # No ports needed for agent (outbound connection)
+
+  ui:
+    build: .
+    volumes:
+      - ./example:/app/example
+      - ./frontend:/app/frontend
+    env_file:
+      - .env
+    ports:
+      - "8501:8501"
+    command: ["streamlit", "run", "frontend/app.py", "--server.address=0.0.0.0"]

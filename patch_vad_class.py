@@ -2,7 +2,13 @@
 import os
 import textwrap
 
-target_file = "venv/lib/python3.11/site-packages/livekit/plugins/silero/vad.py"
+import importlib.util
+spec = importlib.util.find_spec("livekit.plugins.silero")
+if not spec or not spec.origin:
+    print("Could not find livekit.plugins.silero")
+    exit(1)
+target_file = os.path.join(os.path.dirname(spec.origin), "vad.py")
+print(f"Targeting file: {target_file}")
 
 new_vad_stream_code = """
 class VADStream(agents.vad.VADStream):
@@ -380,6 +386,11 @@ class VADStream(agents.vad.VADStream):
 
 with open(target_file, "r") as f:
     content = f.read()
+
+# IDEMPOTENCY CHECK
+if new_vad_stream_code.strip() in content.strip():
+    print("VADStream already patched. Skipping.")
+    exit(0)
 
 # Find start of VADStream
 if "class VADStream" not in content:

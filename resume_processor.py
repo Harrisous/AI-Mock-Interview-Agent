@@ -9,40 +9,50 @@ logger = logging.getLogger("resume-processor")
 logger.setLevel(logging.INFO)
 
 class ResumeProcessor:
-    def __init__(self, example_dir: str = "example"):
+
+    def __init__(self, example_dir: str = "example", resume_text: str = "", jd_text: str = ""):
         self.example_dir = example_dir
-        self.resume_text = ""
-        self.jd_text = ""
+        self.resume_text = resume_text
+        self.jd_text = jd_text
 
     def load_documents(self):
-        """Loads JD from markdown and Resume from the first PDF found."""
+        """Loads JD and Resume from text overrides or files."""
         # Load JD
-        jd_path = os.path.join(self.example_dir, "example_JD.md")
-        if os.path.exists(jd_path):
-            try:
-                with open(jd_path, "r") as f:
-                    self.jd_text = f.read()
-                logger.info(f"Loaded Job Description from {jd_path}")
-            except Exception as e:
-                logger.error(f"Failed to read JD: {e}")
+        if self.jd_text:
+            logger.info("Using provided Job Description text.")
         else:
-            logger.warning(f"Job Description not found at {jd_path}")
+            jd_path = os.path.join(self.example_dir, "example_JD.md")
+            if os.path.exists(jd_path):
+                try:
+                    with open(jd_path, "r") as f:
+                        self.jd_text = f.read()
+                    logger.info(f"Loaded Job Description from {jd_path}")
+                except Exception as e:
+                    logger.error(f"Failed to read JD: {e}")
+            else:
+                logger.error(f"Job Description not found at {jd_path}")
+                raise FileNotFoundError(f"Job Description not found at {jd_path}")
+
 
         # Load Resume (First PDF in directory)
-        pdf_files = glob.glob(os.path.join(self.example_dir, "*.pdf"))
-        if pdf_files:
-            resume_path = pdf_files[0]
-            try:
-                reader = PdfReader(resume_path)
-                text = ""
-                for page in reader.pages:
-                    text += page.extract_text() + "\n"
-                self.resume_text = text
-                logger.info(f"Loaded Resume from {resume_path}")
-            except Exception as e:
-                logger.error(f"Failed to read Resume PDF: {e}")
+        if self.resume_text:
+             logger.info("Using provided Resume text.")
         else:
-            logger.warning("No PDF resume found in example directory.")
+            pdf_files = glob.glob(os.path.join(self.example_dir, "*.pdf"))
+            if pdf_files:
+                resume_path = pdf_files[0]
+                try:
+                    reader = PdfReader(resume_path)
+                    text = ""
+                    for page in reader.pages:
+                        text += page.extract_text() + "\n"
+                    self.resume_text = text
+                    logger.info(f"Loaded Resume from {resume_path}")
+                except Exception as e:
+                    logger.error(f"Failed to read Resume PDF: {e}")
+            else:
+                logger.error("No PDF resume found in example directory.")
+                raise FileNotFoundError("No PDF resume found in example directory.")
 
     async def generate_questions(self, llm_client: llm.LLM) -> list[str]:
         """Generates 2-3 interview questions based on Resume and JD."""
@@ -63,7 +73,7 @@ class ResumeProcessor:
         {self.resume_text[:2000]}
         
         TASK:
-        Generate 2 to 3 deep, expert-level interview questions.
+        Generate 1 deep, expert-level interview question.
         The questions must:
         1. Connect the candidate's specific past experience (from Resume) to the specific requirements of the Job.
         2. Be professional, challenging, and insightful.
@@ -103,7 +113,7 @@ class ResumeProcessor:
                 q = q[2:].strip()
             clean_questions.append(q)
             
-        return clean_questions[:3]
+        return clean_questions[:1]
 
     async def generate_assessment(self, llm_client: llm.LLM, interview_transcript: str):
         """Generates a markdown assessment of the candidate."""
@@ -140,7 +150,39 @@ class ResumeProcessor:
                      full_text += content
                      
         # Save to file
-        with open("assessment.md", "w") as f:
+        with open(os.path.join(self.example_dir, "assessment.md"), "w") as f:
             f.write(full_text)
         
         return full_text
+        return full_text
+        
+    async def extract_job_title(self, llm_client: llm.LLM) -> str:
+        """Extracts the job title from the JD."""
+        if not self.jd_text:
+            return "Candidate"
+            
+        prompt = f"""
+        Extract the job title from the following Job Description.
+        Return ONLY the job title. No extra words.
+        
+        JOB DESCRIPTION:
+        {self.jd_text[:1000]}
+        """
+        
+        chat_ctx = llm.ChatContext()
+        chat_ctx.messages.append(llm.ChatMessage(role="system", content=prompt))
+        
+        stream = llm_client.chat(chat_ctx=chat_ctx)
+        full_text = ""
+        async for chunk in stream:
+            if chunk.choices:
+                 content = chunk.choices[0].delta.content
+                 if content:
+                     full_text += content
+        
+        title = full_text.strip()
+        # Fallback cleanup
+        if len(title) > 50 or "job description" in title.lower():
+             return "Candidate" # Fail safe
+             
+        return title
